@@ -32,14 +32,17 @@ func NewHandler(ready Readiness) http.Handler {
 }
 
 func Run(ctx context.Context, config Config, logger *slog.Logger) error {
+	return RunHandler(ctx, config, logger, NewHandler(nil))
+}
+
+func RunHandler(ctx context.Context, config Config, logger *slog.Logger, handler http.Handler) error {
 	listener, err := net.Listen("tcp", config.Address)
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
 	defer listener.Close()
-	// PostgreSQL is not connected yet: readiness must not claim the API is usable.
 	server := &http.Server{
-		Handler:           NewHandler(nil),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

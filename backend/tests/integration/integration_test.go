@@ -132,11 +132,15 @@ func TestDealership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	admin, err := users.Create(ctx, "", "admin@example.test", "StrongPassword123!", "admin")
+	password, err := domain.Token()
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager, err := users.Create(ctx, admin.ID, "manager@example.test", "StrongPassword123!", "manager")
+	admin, err := users.Create(ctx, "", "admin@example.test", password, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := users.Create(ctx, admin.ID, "manager@example.test", password, "manager")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +150,7 @@ func TestDealership(t *testing.T) {
 	}
 	handler = contractHandler(t, handler)
 	login := func(email string) identity.Login {
-		return decode[identity.Login](t, request(t, handler, "POST", "/api/v1/auth/login", "", "", map[string]string{"email": email, "password": "StrongPassword123!"}, 200))
+		return decode[identity.Login](t, request(t, handler, "POST", "/api/v1/auth/login", "", "", map[string]string{"email": email, "password": password}, 200))
 	}
 	adminLogin := login(admin.Email)
 	managerLogin := login(manager.Email)
@@ -158,7 +162,11 @@ func TestDealership(t *testing.T) {
 	trim := decode[inventory.Trim](t, request(t, handler, "POST", "/api/v1/admin/trims", adminLogin.AccessToken, "", map[string]string{"model_id": model.ID, "name": "Premium"}, 201))
 	request(t, handler, "GET", "/api/v1/models", "", "", nil, 200)
 	request(t, handler, "GET", "/api/v1/models/"+model.ID+"/trims", "", "", nil, 200)
-	request(t, handler, "POST", "/api/v1/admin/staff", adminLogin.AccessToken, "", map[string]string{"email": "second-manager@example.test", "password": "AnotherStrongPassword123!", "role": "manager"}, 201)
+	otherPassword, err := domain.Token()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request(t, handler, "POST", "/api/v1/admin/staff", adminLogin.AccessToken, "", map[string]string{"email": "second-manager@example.test", "password": otherPassword, "role": "manager"}, 201)
 	request(t, handler, "GET", "/api/v1/admin/staff", adminLogin.AccessToken, "", nil, 200)
 	stock := inventory.Store{Pool: pool}
 	newCar := func(vin, condition string) inventory.Car {

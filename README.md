@@ -28,13 +28,17 @@ Go-бэкенд для сайта автосалона с единым ката�
 
 ## Запуск
 
-Локальная среда через Docker Compose:
+Локальная среда через Docker Compose; для генератора конфигурации нужен Go:
 
 ```sh
-cp .env.example .env
-# Измените пароль в POSTGRES_PASSWORD и DATABASE_URL; .env игнорируется Git.
+go run ./backend/cmd/envgen
 docker compose up --build -d
 ```
+
+Генератор создаёт игнорируемый Git файл `.env` со случайным паролем и согласованной
+строкой подключения. Пароль не печатается; существующий файл не перезаписывается.
+`.env.example` содержит пустые поля для ручной настройки вместо готового пароля.
+Не генерируйте новый пароль поверх настроенной БД: её учётные данные меняются отдельно.
 
 Миграции выполняются отдельным контейнером до запуска API и worker.
 API доступен на `http://localhost:8080`. Стандартных учётных записей нет.
@@ -52,7 +56,11 @@ unset ADMIN_PASSWORD
 окружения текущего процесса. Для запуска вне контейнера:
 
 ```sh
-export DATABASE_URL='postgres://dealership:your-password@localhost:5432/dealership?sslmode=disable'
+set -a
+. ./.env
+set +a
+# Для подключения к локальному контейнеру заменяем только hostname.
+export DATABASE_URL="${DATABASE_URL/@db:/@localhost:}"
 go run ./backend/cmd/manage migrate
 go run ./backend/cmd/manage create-admin
 go run ./backend/cmd/api
@@ -114,11 +122,14 @@ JSON API находится под `/api/v1`. Тело запроса — `appli
 ```sh
 go test ./...
 go vet ./...
-TEST_DATABASE_URL='postgres://user:password@localhost:5432/test_db?sslmode=disable' go test -count=1 ./...
+# Передайте TEST_DATABASE_URL из защищённого окружения для отдельной тестовой БД.
+go test -count=1 ./...
 ```
 
 Без `TEST_DATABASE_URL` интеграционные тесты явно пропускаются. Они создают
 собственную случайную схему и удаляют только её. Используйте отдельную тестовую БД.
+CI генерирует новый случайный пароль БД на каждый job и маскирует его в логах.
+Фиксированные учётные данные не хранятся в workflow.
 CI всегда поднимает PostgreSQL, выполняет race detector, vet, проверку форматирования,
 контракта API, сборку и govulncheck. Контейнеры также проверяются отдельным job.
 

@@ -35,7 +35,11 @@ type Login struct {
 
 func New(pool *pgxpool.Pool) (Store, error) {
 	// Unknown accounts still incur the same bcrypt cost as a real login.
-	dummy, err := bcrypt.GenerateFromPassword([]byte("unused-dummy-account-password"), 12)
+	password, err := domain.Token()
+	if err != nil {
+		return Store{}, err
+	}
+	dummy, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	return Store{Pool: pool, DummyHash: dummy}, err
 }
 func ValidEmail(email string) bool {

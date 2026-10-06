@@ -32,8 +32,8 @@ HTTP использует loopback и keep-alive, без TLS/reverse proxy. Ка
 ## Воспроизведение
 
 ```sh
-LOAD_TEST=1 TEST_DATABASE_URL='postgres://user:password@localhost:5432/test_db?sslmode=disable' \
-  go test -count=1 -run TestCatalogLoad -v ./backend/tests/integration
+# Сначала передайте TEST_DATABASE_URL для тестовой БД из защищённого окружения.
+LOAD_TEST=1 go test -count=1 -run TestCatalogLoad -v ./backend/tests/integration
 ```
 
 Тест создаёт собственную случайную схему, заполняет каталог, запускает HTTP

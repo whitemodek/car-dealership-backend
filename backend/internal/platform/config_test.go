@@ -22,7 +22,13 @@ func TestConfig(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			config, err := loadConfig(func(key string) (string, bool) { value, ok := test.env[key]; return value, ok })
+			config, err := loadConfig(func(key string) (string, bool) {
+				if key == "DATABASE_URL" {
+					return "postgres://localhost/dealership?sslmode=disable", true
+				}
+				value, ok := test.env[key]
+				return value, ok
+			})
 			if (err != nil) != test.invalid {
 				t.Fatalf("unexpected error: %v", err)
 			}

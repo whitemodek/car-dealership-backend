@@ -7,19 +7,18 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/whitemodek/car-dealership-backend/backend/internal/api"
 	"github.com/whitemodek/car-dealership-backend/backend/internal/database"
 	"github.com/whitemodek/car-dealership-backend/backend/internal/platform"
+	"github.com/whitemodek/car-dealership-backend/backend/internal/worker"
 )
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(logger); err != nil {
-		logger.Error("API stopped", "error", err)
+		logger.Error("worker stopped")
 		os.Exit(1)
 	}
 }
-
 func run(logger *slog.Logger) error {
 	config, err := platform.LoadConfig()
 	if err != nil {
@@ -32,9 +31,5 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 	defer pool.Close()
-	handler, err := api.New(api.Options{Pool: pool, Logger: logger, Origins: config.Origins, ReservationDuration: config.ReservationDuration, TrustedProxies: config.TrustedProxies})
-	if err != nil {
-		return err
-	}
-	return platform.RunHandler(ctx, config, logger, handler)
+	return (worker.Worker{Pool: pool, Logger: logger, WebhookURL: config.WebhookURL, Secret: config.WebhookSecret}).Run(ctx)
 }

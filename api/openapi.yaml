@@ -1,0 +1,634 @@
+openapi: 3.0.3
+info:
+  title: Car Dealership API
+  version: 1.0.0
+  description: |
+    Public catalog and staff API for a dealership selling new and used vehicles.
+    Money uses integer minor units; price comparisons require a currency.
+    Staff authenticate using revocable Bearer sessions (12 hours).
+    Public reservation responses contain no customer contact information.
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: Health
+  - name: Authentication
+  - name: Catalog
+  - name: Leads
+  - name: Reservations
+  - name: Administration
+paths:
+  /health/live:
+    get:
+      operationId: liveness
+      tags: [Health]
+      responses:
+        '200': { description: Process is alive, content: { application/json: { schema: { $ref: '#/components/schemas/Health' } } } }
+  /health/ready:
+    get:
+      operationId: readiness
+      tags: [Health]
+      responses:
+        '200': { description: Database and schema are ready, content: { application/json: { schema: { $ref: '#/components/schemas/Health' } } } }
+        '503': { description: Database or schema unavailable, content: { application/json: { schema: { $ref: '#/components/schemas/Health' } } } }
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, password]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                password: { type: string, format: password, maxLength: 72 }
+      responses:
+        '200': { description: Session created, content: { application/json: { schema: { $ref: '#/components/schemas/Login' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      tags: [Authentication]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Session revoked }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/auth/me:
+    get:
+      operationId: currentStaff
+      tags: [Authentication]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Current staff member, content: { application/json: { schema: { $ref: '#/components/schemas/Staff' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/models:
+    get:
+      operationId: listModels
+      tags: [Catalog]
+      responses:
+        '200': { description: Vehicle models, content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/Model' } } } } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/models/{id}/trims:
+    parameters: [{ $ref: '#/components/parameters/ID' }]
+    get:
+      operationId: listTrims
+      tags: [Catalog]
+      responses:
+        '200': { description: Model trims, content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/Trim' } } } } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/cars:
+    get:
+      operationId: listPublicCars
+      tags: [Catalog]
+      description: Only published cars offered for sale. Reserved cars remain visible with available=false. Stable sorting uses the ID as a tie-breaker.
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+        - { $ref: '#/components/parameters/Query' }
+        - { $ref: '#/components/parameters/Condition' }
+        - { $ref: '#/components/parameters/ModelID' }
+        - { $ref: '#/components/parameters/Currency' }
+        - { $ref: '#/components/parameters/MinPrice' }
+        - { $ref: '#/components/parameters/MaxPrice' }
+        - { $ref: '#/components/parameters/Sort' }
+      responses:
+        '200': { description: Catalog page, content: { application/json: { schema: { $ref: '#/components/schemas/CarPage' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/cars/{id}:
+    parameters: [{ $ref: '#/components/parameters/ID' }]
+    get:
+      operationId: getPublicCar
+      tags: [Catalog]
+      responses:
+        '200': { description: Published car offered for sale, content: { application/json: { schema: { $ref: '#/components/schemas/Car' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/leads:
+    post:
+      operationId: createLead
+      tags: [Leads]
+      description: Requires explicit consent and a phone number. purchase and test_drive require car_id.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateLead' } } } }
+      responses:
+        '201': { description: Lead created, content: { application/json: { schema: { type: object, required: [id, status], properties: { id: { type: string, format: uuid }, status: { type: string, enum: [new] } } } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/reservations:
+    post:
+      operationId: createReservation
+      tags: [Reservations]
+      description: |
+        Reserves a concrete car for the configured duration (24h by default).
+        Supply a freshly generated UUID as Idempotency-Key. Keep the key private.
+        A repeated key with the same normalized request returns the original result.
+        Reusing a key with a different request or booking an unavailable car returns 409.
+        Contacts and the internal lead ID are never included in this response.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateReservation' } } } }
+      responses:
+        '201': { description: Reservation created, content: { application/json: { schema: { $ref: '#/components/schemas/PublicReservation' } } } }
+        '200': { description: Idempotent replay, content: { application/json: { schema: { $ref: '#/components/schemas/PublicReservation' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/staff/cars:
+    get:
+      operationId: listStaffCars
+      tags: [Catalog]
+      security: [{ bearerAuth: [] }]
+      description: Includes drafts, archived, withdrawn and sold cars.
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+        - { $ref: '#/components/parameters/Query' }
+        - { $ref: '#/components/parameters/Condition' }
+        - { $ref: '#/components/parameters/ModelID' }
+        - { $ref: '#/components/parameters/Currency' }
+        - { $ref: '#/components/parameters/MinPrice' }
+        - { $ref: '#/components/parameters/MaxPrice' }
+        - { $ref: '#/components/parameters/Sort' }
+      responses:
+        '200': { description: Inventory page, content: { application/json: { schema: { $ref: '#/components/schemas/CarPage' } } } }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createCar
+      tags: [Catalog]
+      security: [{ bearerAuth: [] }]
+      description: Creates a draft. The trim must belong to the specified model.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CarInput' } } } }
+      responses:
+        '201':
+          description: Draft created
+          headers: { Location: { schema: { type: string } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/Car' } } }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/staff/cars/{id}:
+    parameters: [{ $ref: '#/components/parameters/ID' }]
+    get:
+      operationId: getStaffCar
+      tags: [Catalog]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Inventory car, content: { application/json: { schema: { $ref: '#/components/schemas/Car' } } } }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      operationId: updateCar
+      tags: [Catalog]
+      security: [{ bearerAuth: [] }]
+      description: |
+        version is required for optimistic concurrency control; stale versions return 409.
+        At least one changed field is required. Price changes create history.
+        Selling completes current reservations; withdrawing or unpublishing cancels them.
+        Sold cars cannot be returned to available through this endpoint.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CarUpdate' } } } }
+      responses:
+        '200': { description: Updated inventory car, content: { application/json: { schema: { $ref: '#/components/schemas/Car' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/staff/cars/{id}/prices:
+    parameters: [{ $ref: '#/components/parameters/ID' }]
+    get:
+      operationId: priceHistory
+      tags: [Catalog]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Latest 100 price changes, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [old_price_minor, new_price_minor, currency, created_at]
+                      properties:
+                        old_price_minor: { type: integer, format: int64 }
+                        new_price_minor: { type: integer, format: int64 }
+                        currency: { type: string }
+                        created_at: { type: string, format: date-time }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/admin/models:
+    post:
+      operationId: createModel
+      tags: [Administration]
+      security: [{ bearerAuth: [] }]
+      description: Administrator only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [make, name]
+              properties:
+                make: { type: string, minLength: 1, maxLength: 80 }
+                name: { type: string, minLength: 1, maxLength: 80 }
+      responses:
+        '201': { description: Model created, content: { application/json: { schema: { $ref: '#/components/schemas/Model' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/admin/trims:
+    post:
+      operationId: createTrim
+      tags: [Administration]
+      security: [{ bearerAuth: [] }]
+      description: Administrator only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [model_id, name]
+              properties:
+                model_id: { type: string, format: uuid }
+                name: { type: string, minLength: 1, maxLength: 80 }
+      responses:
+        '201': { description: Trim created, content: { application/json: { schema: { $ref: '#/components/schemas/Trim' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/staff/leads:
+    get:
+      operationId: listLeads
+      tags: [Leads]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+        - name: status
+          in: query
+          schema: { type: string, enum: [new, contacted, qualified, closed] }
+      responses:
+        '200': { description: Leads page, content: { application/json: { schema: { $ref: '#/components/schemas/LeadPage' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/staff/leads/{id}:
+    parameters: [{ $ref: '#/components/parameters/ID' }]
+    get:
+      operationId: getLead
+      tags: [Leads]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Lead with contacts, content: { application/json: { schema: { $ref: '#/components/schemas/Lead' } } } }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      operationId: updateLead
+      tags: [Leads]
+      security: [{ bearerAuth: [] }]
+      description: new -> contacted -> qualified -> closed. Any open status can transition to closed. Assignment requires an active staff member.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                status: { type: string, enum: [new, contacted, qualified, closed] }
+                assigned_to: { type: string, format: uuid }
+                unassign: { type: boolean, description: Cannot be combined with assigned_to when true }
+      responses:
+        '200': { description: Lead updated, content: { application/json: { schema: { $ref: '#/components/schemas/Lead' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/staff/reservations:
+    get:
+      operationId: listReservations
+      tags: [Reservations]
+      security: [{ bearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/Limit' }, { $ref: '#/components/parameters/Offset' }]
+      responses:
+        '200': { description: Reservations page, content: { application/json: { schema: { $ref: '#/components/schemas/ReservationPage' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/staff/reservations/{id}:
+    parameters: [{ $ref: '#/components/parameters/ID' }]
+    patch:
+      operationId: updateReservation
+      tags: [Reservations]
+      security: [{ bearerAuth: [] }]
+      description: Confirm or cancel an unexpired reservation. Confirmation does not extend the deadline. Sale completion happens via the car endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status]
+              properties:
+                status: { type: string, enum: [confirmed, cancelled] }
+      responses:
+        '200': { description: Reservation updated, content: { application/json: { schema: { $ref: '#/components/schemas/Reservation' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/admin/staff:
+    get:
+      operationId: listStaff
+      tags: [Administration]
+      security: [{ bearerAuth: [] }]
+      description: Administrator only. Returns up to 500 staff members.
+      responses:
+        '200': { description: Staff list, content: { application/json: { schema: { type: object, required: [items], properties: { items: { type: array, items: { $ref: '#/components/schemas/Staff' } } } } } } }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createStaff
+      tags: [Administration]
+      security: [{ bearerAuth: [] }]
+      description: Administrator only. Password must contain at least 12 characters and at most 72 UTF-8 bytes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, password, role]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                password: { type: string, format: password, minLength: 12, maxLength: 72 }
+                role: { type: string, enum: [admin, manager] }
+      responses:
+        '201': { description: Staff member created, content: { application/json: { schema: { $ref: '#/components/schemas/Staff' } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/admin/staff/{id}/disable:
+    parameters: [{ $ref: '#/components/parameters/ID' }]
+    post:
+      operationId: disableStaff
+      tags: [Administration]
+      security: [{ bearerAuth: [] }]
+      description: Administrator only. Revokes all sessions. Self-disable and disabling the last active administrator are forbidden.
+      responses:
+        '204': { description: Staff member disabled }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/admin/audit:
+    get:
+      operationId: auditLog
+      tags: [Administration]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+        - name: entity_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Audit page, newest first; administrator only
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, limit, offset]
+                properties:
+                  limit: { type: integer }
+                  offset: { type: integer }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, action, entity_id, details, created_at]
+                      properties:
+                        id: { type: integer, format: int64 }
+                        actor_id: { type: string, format: uuid, nullable: true }
+                        action: { type: string }
+                        entity_id: { type: string, format: uuid }
+                        details: { type: object, additionalProperties: true }
+                        created_at: { type: string, format: date-time }
+        default: { $ref: '#/components/responses/Error' }
+  /api/v1/admin/metrics:
+    get:
+      operationId: metrics
+      tags: [Administration]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Per-process counters and database outbox gauges; administrator only
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requests_total: { type: integer, format: int64 }
+                  server_errors_total: { type: integer, format: int64 }
+                  inflight: { type: integer, format: int64 }
+                  duration_seconds_total: { type: number }
+                  outbox_pending: { type: integer, format: int64 }
+                  outbox_failed: { type: integer, format: int64 }
+                  db_connections: { type: integer }
+        default: { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Opaque revocable session token; not a JWT. Do not store in browser localStorage or include in logs.
+  responses:
+    Error:
+      description: |
+        401 unauthorized; 403 forbidden; 404 not_found; 409 conflict;
+        422 invalid_request; 429 rate_limited; 500 internal_error; 504 request_timeout.
+        Internal SQL details and contacts are never included. A 429 includes Retry-After.
+      headers:
+        Retry-After: { schema: { type: string } }
+        X-Request-ID: { schema: { type: string } }
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties:
+              error:
+                type: object
+                required: [code]
+                properties:
+                  code: { type: string }
+  parameters:
+    ID: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+    Offset: { name: offset, in: query, schema: { type: integer, minimum: 0, maximum: 100000, default: 0 } }
+    Query: { name: q, in: query, description: Case-insensitive literal substring in make or model, schema: { type: string, maxLength: 100 } }
+    Condition: { name: condition, in: query, schema: { type: string, enum: [new, used] } }
+    ModelID: { name: model_id, in: query, schema: { type: string, format: uuid } }
+    Currency: { name: currency, in: query, schema: { type: string, pattern: '^[A-Z]{3}$' } }
+    MinPrice: { name: min_price, in: query, description: Minor units; currency required, schema: { type: integer, format: int64, minimum: 0 } }
+    MaxPrice: { name: max_price, in: query, description: Minor units; currency required, schema: { type: integer, format: int64, minimum: 0 } }
+    Sort: { name: sort, in: query, description: Price sorting requires currency, schema: { type: string, enum: [newest, price_asc, price_desc, year_desc], default: newest } }
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok, not_ready] }
+    Model:
+      type: object
+      required: [id, make, name]
+      properties:
+        id: { type: string, format: uuid }
+        make: { type: string }
+        name: { type: string }
+    Trim:
+      type: object
+      required: [id, model_id, name]
+      properties:
+        id: { type: string, format: uuid }
+        model_id: { type: string, format: uuid }
+        name: { type: string }
+    CarInput:
+      type: object
+      additionalProperties: false
+      required: [model_id, vin, condition, year, mileage_km, price_minor, currency, color, fuel, transmission]
+      properties:
+        model_id: { type: string, format: uuid }
+        trim_id: { type: string, format: uuid, nullable: true }
+        vin: { type: string, pattern: '^[A-HJ-NPR-Za-hj-npr-z0-9]{17}$' }
+        condition: { type: string, enum: [new, used] }
+        year: { type: integer, minimum: 1886, description: Maximum is the current UTC year plus one }
+        mileage_km: { type: integer, minimum: 0, maximum: 2000000 }
+        price_minor: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        currency: { type: string, pattern: '^[A-Za-z]{3}$' }
+        color: { type: string, minLength: 1, maxLength: 80 }
+        fuel: { type: string, enum: [petrol, diesel, hybrid, electric] }
+        transmission: { type: string, enum: [manual, automatic] }
+        description: { type: string, maxLength: 10000 }
+        photos: { type: array, nullable: true, maxItems: 20, items: { type: string, format: uri, pattern: '^https://', maxLength: 2048 } }
+    Car:
+      type: object
+      required: [id, model_id, make, model, vin, condition, year, mileage_km, price_minor, currency, color, fuel, transmission, description, publication, sale_status, available, version, photos, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        model_id: { type: string, format: uuid }
+        trim_id: { type: string, format: uuid, nullable: true }
+        make: { type: string }
+        model: { type: string }
+        trim: { type: string, nullable: true }
+        vin: { type: string }
+        condition: { type: string, enum: [new, used] }
+        year: { type: integer }
+        mileage_km: { type: integer }
+        price_minor: { type: integer, format: int64 }
+        currency: { type: string }
+        color: { type: string }
+        fuel: { type: string }
+        transmission: { type: string }
+        description: { type: string }
+        publication: { type: string, enum: [draft, published, archived] }
+        sale_status: { type: string, enum: [available, sold, withdrawn] }
+        available: { type: boolean }
+        version: { type: integer, minimum: 1 }
+        photos: { type: array, items: { type: string } }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CarUpdate:
+      type: object
+      additionalProperties: false
+      required: [version]
+      minProperties: 2
+      properties:
+        version: { type: integer, minimum: 1 }
+        price_minor: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        publication: { type: string, enum: [draft, published, archived] }
+        sale_status: { type: string, enum: [available, sold, withdrawn] }
+        description: { type: string, maxLength: 10000 }
+        color: { type: string, minLength: 1, maxLength: 80 }
+        photos: { type: array, maxItems: 20, items: { type: string, format: uri, pattern: '^https://', maxLength: 2048 } }
+    Contact:
+      type: object
+      required: [name, phone, consent]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        phone: { type: string, pattern: '^\+?[0-9 ()-]{5,30}$', description: 5 to 15 digits excluding separators }
+        email: { type: string, maxLength: 254, description: Optional; must be a valid email when nonempty }
+        message: { type: string, maxLength: 2000 }
+        consent: { type: boolean, enum: [true] }
+    CreateLead:
+      allOf:
+        - { $ref: '#/components/schemas/Contact' }
+        - type: object
+          required: [kind]
+          properties:
+            car_id: { type: string, format: uuid, nullable: true }
+            kind: { type: string, enum: [purchase, callback, test_drive] }
+    Lead:
+      type: object
+      required: [id, kind, name, phone, email, message, status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        car_id: { type: string, format: uuid, nullable: true }
+        kind: { type: string, enum: [purchase, callback, test_drive] }
+        name: { type: string }
+        phone: { type: string }
+        email: { type: string }
+        message: { type: string }
+        status: { type: string, enum: [new, contacted, qualified, closed] }
+        assigned_to: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateReservation:
+      allOf:
+        - { $ref: '#/components/schemas/Contact' }
+        - type: object
+          required: [car_id]
+          properties:
+            car_id: { type: string, format: uuid }
+    PublicReservation:
+      type: object
+      additionalProperties: false
+      required: [id, car_id, status, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        car_id: { type: string, format: uuid }
+        status: { type: string, enum: [active, confirmed, cancelled, expired, completed] }
+        expires_at: { type: string, format: date-time }
+    Reservation:
+      allOf:
+        - type: object
+          required: [id, car_id, lead_id, status, expires_at, created_at]
+          properties:
+            id: { type: string, format: uuid }
+            car_id: { type: string, format: uuid }
+            lead_id: { type: string, format: uuid }
+            status: { type: string, enum: [active, confirmed, cancelled, expired, completed] }
+            expires_at: { type: string, format: date-time }
+            created_at: { type: string, format: date-time }
+    Staff:
+      type: object
+      required: [id, email, role, active, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        role: { type: string, enum: [admin, manager] }
+        active: { type: boolean }
+        created_at: { type: string, format: date-time }
+    Login:
+      type: object
+      required: [access_token, token_type, expires_at, staff]
+      properties:
+        access_token: { type: string, pattern: '^[a-f0-9]{64}$' }
+        token_type: { type: string, enum: [Bearer] }
+        expires_at: { type: string, format: date-time }
+        staff: { $ref: '#/components/schemas/Staff' }
+    CarPage:
+      type: object
+      required: [items, limit, offset]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Car' } }
+        limit: { type: integer }
+        offset: { type: integer }
+    LeadPage:
+      type: object
+      required: [items, limit, offset]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Lead' } }
+        limit: { type: integer }
+        offset: { type: integer }
+    ReservationPage:
+      type: object
+      required: [items, limit, offset]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Reservation' } }
+        limit: { type: integer }
+        offset: { type: integer }
